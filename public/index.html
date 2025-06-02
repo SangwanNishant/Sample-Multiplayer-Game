@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Flappy Combat</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #222; font-family: Arial; }
+    canvas { display: block; }
+    #ui { position: fixed; top: 10px; left: 10px; color: white; }
+    #readyButton { 
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      padding: 10px 20px; background: #4CAF50; color: white; 
+      border: none; border-radius: 5px; cursor: pointer; 
+    }
+    #countdown {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      color: white; font-size: 72px; text-shadow: 0 0 10px black;
+    }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <div id="status">Connecting...</div>
+    <div id="score">Score: 0 - 0</div>
+    <div id="waiting"></div>
+  </div>
+  <div id="countdown"></div>
+  <button id="readyButton" disabled>READY</button>
+  <canvas id="gameCanvas"></canvas>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    // Client code goes here
+    const socket = io();
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const scoreEl = document.getElementById('score');
+    const waitingEl = document.getElementById('waiting');
+    const readyButton = document.getElementById('readyButton');
+    const countdownEl = document.getElementById('countdown');
+
+    // Game state
+    let gameState = null;
+    let playerId = null;
+    let playerPosition = null;
+    let gameActive = false;
+    const keys = {};
+
+    // Setup
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // Input
+    document.addEventListener('keydown', (e) => {
+      keys[e.code] = true;
+      if (gameActive) {
+        if (e.code === 'Space') socket.emit('flap');
+        if (e.code === 'KeyQ' && playerPosition === 'left') socket.emit('shoot');
+        if (e.code === 'KeyM' && playerPosition === 'right') socket.emit('shoot');
+      }
+    });
+
+    document.addEventListener('keyup', (e) => {
+      keys[e.code] = false;
+    });
+
+    function processInput() {
+      if (!gameActive) return;
+      const moveSpeed = 5;
+      
+      if (playerPosition === 'left') {
+        if (keys.KeyA) socket.emit('move', { direction: 'left', speed: moveSpeed });
+        if (keys.KeyD) socket.emit('move', { direction: 'right', speed: moveSpeed });
+      } else {
+        if (keys.ArrowLeft) socket.emit('move', { direction: 'left', speed: moveSpeed });
+        if (keys.ArrowRight) socket.emit('move', { direction: 'right', speed: moveSpeed });
+      }
+    }
+
+    // Socket handlers
+    socket.on('playerPaired', (data) => {
+      playerId = socket.id;
+      playerPosition = data.player1.id === playerId ? 'left' : 'right';
+      statusEl.textContent = `You: ${playerPosition.toUpperCase()} Player`;
+      readyButton.disabled = false;
+      gameState = {
+        leftPlayer: { x: 100, y: 300, velocity: 0 },
+        rightPlayer: { x: 500, y: 300, velocity: 0 },
+        bullets: []
+      };
+      requestAnimationFrame(gameLoop);
+    });
+
+    socket.on('playerReadyUpdate', (data) => {
+      if (data.playerId !== playerId) {
+        waitingEl.textContent = data.ready ? 'Opponent ready!' : 'Waiting for opponent...';
+      }
+    });
+
+    socket.on('countdown', (num) => {
+      countdownEl.textContent = num > 0 ? num : 'GO!';
+      if (num <= 0) setTimeout(() => countdownEl.textContent = '', 500);
+    });
+
+    socket.on('gameStart', (state) => {
+      gameActive = true;
+      gameState = state;
+      readyButton.style.display = 'none';
+      waitingEl.textContent = playerPosition === 'left' 
+        ? 'Controls: WASD to move, SPACE to flap, Q to shoot' 
+        : 'Controls: ARROWS to move, SPACE to flap, M to shoot';
+    });
+
+    socket.on('gameUpdate', (state) => {
+      gameState = state;
+    });
+
+    socket.on('playerScored', (scores) => {
+      scoreEl.textContent = `Score: ${scores.left} - ${scores.right}`;
+    });
+
+    socket.on('opponentDisconnected', () => {
+      gameActive = false;
+      statusEl.textContent = 'Opponent disconnected!';
+      readyButton.style.display = 'none';
+    });
+
+    // Ready button
+    readyButton.addEventListener('click', () => {
+      const isReady = readyButton.textContent === 'READY';
+      readyButton.textContent = isReady ? 'CANCEL' : 'READY';
+      socket.emit(isReady ? 'playerReady' : 'playerCancelReady');
+    });
+
+    // Rendering
+    function gameLoop() {
+      processInput();
+      ctx.fillStyle = '#87CEEB';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (gameState) {
+        // Draw players
+        ctx.fillStyle = '#FF0000';
+        ctx.fillRect(gameState.leftPlayer.x, gameState.leftPlayer.y, 40, 30);
+        ctx.fillStyle = '#0000FF';
+        ctx.fillRect(gameState.rightPlayer.x, gameState.rightPlayer.y, 40, 30);
+
+        // Draw bullets
+        ctx.fillStyle = '#FFFF00';
+        gameState.bullets.forEach(bullet => {
+          ctx.beginPath();
+          ctx.arc(bullet.x, bullet.y, 5, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+      requestAnimationFrame(gameLoop);
+    }
+  </script>
+</body>
+</html>
